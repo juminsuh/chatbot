@@ -1,0 +1,7 @@
+.env
+.cache
+.git
+venv
+venv2
+__pycache__
+*.gguf
