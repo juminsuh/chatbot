@@ -1,7 +1,5 @@
-ollama
 torch
 transformers
 langgraph
 dotenv
 openai
-faiss-cpu

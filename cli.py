@@ -1,32 +1,46 @@
 """Interactive CLI to exercise the counseling pipeline turn by turn.
 
-Run from repo root: `python -m counsel.cli [--debug]`
+python cli.py --debug True
+python cli.py
 """
 import argparse
+import time
 
 from graph import get_graph
+from pattern_matching import warmup
 from state import new_session
 
 
+def _str2bool(value: str) -> bool:
+    return value.strip().lower() in ("true", "1", "yes")
+
+
 def _print_debug(state: dict) -> None:
-    filled = [slot for slot, values in state["slots"].items() if values]
     print(
         f"  [stage={state['stage']} turn_count={state['turn_count']} off_topic={state['off_topic']} "
-        f"filled={filled} pattern_final={state['pattern_final']} gate={state['gate']}]"
+        f"pattern_final={state['pattern_final']} gate={state['gate']}]"
     )
+    for slot, values in state["slots"].items():
+        content = " / ".join(values) if values else "X"
+        print(f"    - {slot}: {content}")
     print(
-        f"  [supervisor_action={state.get('supervisor_action')} "
-        f"pending(qwen에 전달된 target_slot/question_intent)={state.get('pending')}]"
+        f"  [offtopic_streak={state.get('offtopic_streak')} "
+        f"pending(target_slot/question_intent)={state.get('pending')}]"
     )
+    print(f"  [asked_slots={state.get('asked_slots')}]")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--debug", type=_str2bool, default=False)
     args = parser.parse_args()
 
     graph = get_graph()
-    state = new_session()
+    name = input("닉네임을 입력해주세요: ").strip()
+    state = new_session(name)
+
+    print("[임베딩 모델 로딩 중...]")
+    warmup()
 
     print("[상담을 시작합니다 - 종료하려면 'quit' 입력]\n")
     state = graph.invoke(state)
@@ -43,7 +57,10 @@ def main() -> None:
             break
 
         state["user_input"] = user_input
+        turn_start = time.perf_counter()
         state = graph.invoke(state)
+        elapsed = time.perf_counter() - turn_start
+        print(f"[TIMING DEBUG] 응답 생성까지 걸린 시간: {elapsed:.2f}초")
         print(f"\n상담사: {state['bot_message']}\n")
         if args.debug:
             _print_debug(state)

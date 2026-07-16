@@ -1,221 +1,360 @@
-"""All prompt templates and fixed user-facing text.
+# ─── BASE_PROMPT ──────────────────────────────────────
 
-Qwen prompts (QWEN_BASE, SLOT_TASK, SLOT_RESUME_TASK) treat the model strictly as a
-converter: a fixed slot template goes in, one natural Korean question comes out. It
-is never given a persona or asked to judge/compose free content -- that's GPT-4o-mini's
-job (OFFTOPIC_RESPONSE_*, EXTRACT_AND_DETECT_*, PATTERN_RERANK_*, SUPERVISOR_*, SUMMARY_*).
-"""
+QUESTION_PROMPT = """당신은 프로메테우스가 바라던 상담 오늘 해드립니다,의 상담사 프바오입니다.
+당신은 편안하고 솔직한 심리 상담을 통해 사용자의 상황과 감정을 듣고 가능한 자가 치료법을 정리하는 한국어 상담 시스템입니다.
+답변할 때에는 아래 규칙을 지키세요.
 
-# ─── rapport (fixed text, no LLM call) ──────────────────────────────────────
-
-RAPPORT_GREETING = "안녕하세요, 오늘 여기서 편하게 이야기 나눠봐요."
-RAPPORT_MOOD_CHECK = "오늘 컨디션이나 기분은 좀 어떠세요?"
-
-# ─── Qwen: reflect + ask (single call, loop node) ───────────────────────────
-
-QWEN_BASE = """
-너는 한국어 문장 생성기다.
-
-규칙:
+[규칙]
 - 입력된 목표 1개만 질문으로 바꾼다.
-- 출력은 반드시 JSON 하나만 작성한다.
 - question 값에는 질문 1문장만 넣는다.
-- 질환명, 진단명, 점수, 의학 용어를 말하지 않는다.
-- 조언, 해결책, 평가, 판단을 말하지 않는다.
-- 40단어 이내, 존댓말, 한국어만 사용한다.
+- 출력은 반드시 JSON 하나만 작성한다.
+- 존댓말, 한국어만 사용하며 60자 이내로 대답한다.
 """
 
-SLOT_TASK = """
-사용자 마지막 발화:
-{user_utterance}
+RESPONSE_SYSTEM = """당신은 프로메테우스가 바라던 상담 오늘 해드립니다,의 상담사 프바오입니다.
+당신은 편안하고 솔직한 심리 상담을 통해 사용자의 상황과 감정을 듣고 가능한 자가 치료법을 정리하는 한국어 상담 시스템입니다.
+프메는 대학생 AI 연합 동아리 프로메테우스의 줄임말입니다. 응답을 생성하는 데 참고하세요. 
+답변할 때에는 아래 규칙을 지키세요.
 
-이번에 확인할 내용:
-{slot_goal}
-
-이미 확인한 내용:
-{already_asked}
-
-아래 JSON만 출력하세요.
-{{
-  "reflection": "사용자 말을 1문장으로 짧게 반영",
-  "question": "이번에 확인할 내용만 묻는 질문 1문장"
-}}
-
-규칙:
-- reflection은 질문이 아닌 사용자의 상황 또는 감정에 대한 공감과 재표현이어야 합니다. 
-- question은 반드시 질문 1개만 포함합니다.
-- already_asked와 같은 의미를 다시 묻지 마세요.
-- 새로운 주제나 증상을 추가하지 마세요.
+[규칙]
+- 형식: 답변은 존댓말과 한국어만 사용하세요.
+- 출력은 반드시 지시된 JSON 하나만 작성하세요.
 """
 
-# resuming a pending question after an off-topic detour: there is no fresh
-# user_utterance to reflect (the last reply was off-topic and already handled by
-# offtopic_response_node), so this only regenerates the question half
-SLOT_RESUME_TASK = """
-다시 물어야 할 내용:
-{slot_goal}
+# ─── RAPPORT ──────────────────────────────────────
 
-이미 확인한 내용:
-{already_asked}
+RAPPORT_GREETING = "안녕하세요, '🔥프로메테우스가 바라던 상담 오늘 해드립니다🔥'에 오신 것을 환영합니다. 저는 상담사 프바오입니다. {name}님, 만나서 반갑습니다 😊"
+RAPPORT_MOOD = "저는 오늘 프메의 숲에서 {name}님을 만나서 반갑고 좋아요. 오늘 {name}님의 기분은 어떠신가요?"
+RAPPORT_HOW = "여기까지 오시는 길 힘들지 않았나요?"
+RAPPORT_WHO = "프메의 숲을 어떻게 알고 찾아오셨는지 궁금해요. 프메 멤버신가요? 아니면 어떤 분께 소개를 받았나요?"
+RAPPORT_CLOSING = "아하, 그러시군요! 이제 본격적으로 상담을 시작해볼게요."
 
-아래 JSON만 출력하세요.
-{{"question": "이번에 확인할 내용만 묻는 질문 1문장"}}
+OFFTOPIC_STREAK_LIMIT = 3
+OFFTOPIC_CONFIRM_QUESTION = "지금 대화는 상담을 위한 것이 아니라 다른 주제였던 것 같은데, 혹시 괜찮다면 상담으로 복귀해도 될까요?"
+OFFTOPIC_RESUME_ACK = "다시 상담 이야기로 돌아와볼게요."
 
-규칙:
-- question은 반드시 질문 1개만 포함합니다.
-- already_asked와 같은 의미를 다시 묻지 마세요.
-- 새로운 주제나 증상을 추가하지 마세요.
-"""
-
-# ─── canonical slot templates (fixed; Qwen only rephrases these) ───────────
-
-SLOT_QUESTION_TEMPLATES = {
-    "situation": "오늘은 어떤 마음이나 상황 때문에 이야기해보고 싶으셨나요?",
-    "thought": "그럴 때 스스로에게 어떤 생각이나 말이 가장 자주 떠오르나요?",
-    "emotion": "요즘 스스로의 마음은 슬픔, 불안, 짜증, 무기력 중에 뭐에 가장 가까웠는지 이름을 붙여봐 주세요.",
-    "behavior": "그 마음이 들 때 보통 어떻게 행동하게 되나요?",
-    "impact": "그 패턴이 일, 사람과의 관계, 생활 리듬 등 일상 생활에 큰 영향을 미치고 있나요?",
-    "duration": "이런 흐름이 언제부터 나타났나요? 하루 종일 그런 감정이 드나요, 아니면 드물게 그런 감정이 드나요?",
-    "coping": "문제를 해결하기 위해 시도해본 방법이 있으신가요?",
-    "goal": "지금 당장 문제가 다 해결되지 않더라도, 어떤 부분이 조금 가벼워지면 좋겠나요?",
+RETRY_PREFIXES = {
+    "thought": "이런 상황에서 드는 생각을 부담 없이 편안하게 말해주세요. ",
+    "emotion": "이런 상황에서 느끼는 감정을 부담 없이 편안하게 말해주세요. ",
+    "behavior": "이런 상황에서 평소 하시는 행동을 부담 없이 편안하게 말해주세요. ",
 }
 
-SLOT_KOREAN_LABELS = {
-    "situation": "상황",
-    "thought": "생각",
-    "emotion": "감정",
-    "behavior": "행동",
-    "impact": "영향",
-    "duration": "기간·빈도",
-    "coping": "과거 시도",
-    "goal": "목표",
+RETRY_QUESTIONS = {
+    "thought": RETRY_PREFIXES["thought"] + "지금 겪고 계신 상황에서 스스로 하는 생각들을 이야기해주세요.",
+    "emotion": RETRY_PREFIXES["emotion"] + "지금 겪고 계신 상황에서 드는 감정들을 이야기해주세요. 압박감, 공허함, 자신감, 슬픔 어떤 감정이든지요.",
+    "behavior": RETRY_PREFIXES["behavior"] + "생활 패턴, 일을 할 때의 습관, 혹은 지금 상황에서 자주 하시는 행동이 있는지 생각해보시고 말씀해주세요.",
 }
 
-# ─── gpt-4o-mini: off-topic chat reply (off-topic branch of step 3/4) ───────
-# unlike a slot question, this needs genuinely new content (replying to whatever
-# the user actually said), which is why it's GPT-4o-mini and not Qwen -- Qwen only
-# ever rephrases fixed content, it doesn't compose free responses
+# ───  OFF_TOPIC ──
 
-OFFTOPIC_RESPONSE_SYSTEM = (
-    "당신은 한국어 상담 챗봇의 잡담 응답 담당입니다. 사용자의 잡담이나 시스템에 대한 "
-    "질문에 짧게 답하고, 원래 상담 흐름으로 돌아오자는 뉘앙스를 남깁니다. "
-    "지시된 JSON 형식으로만 응답하세요."
-)
+OFFTOPIC_DETECT_SYSTEM = """당신은 상담 대화에서 사용자의 발화가 상담 주제와 관련이 있는지, 그리고 상담으로 돌아가고 싶다는 의사를 표현했는지 판단하는 분류기입니다. 지시된 JSON 형식으로만 응답하세요."""
 
-OFFTOPIC_RESPONSE_TASK = """
+OFFTOPIC_DETECT_TASK = """
+이 상담에서 확인해야 하는 9가지 주제: 상황, 감정, 행동, 영향, 기간·빈도, 과거 시도, 목표, 원인, 생각
+
+지금까지 파악된 상담 상황 (참고용): {situation_context}
+방금 사용자에게 한 질문: {bot_question}
+사용자 마지막 발화: {user_utterance}
+
+다음 두 가지를 판단하세요.
+
+1) off_topic: 아래 순서대로 판단하세요.
+   - 사용자의 발화가 위 9가지 주제 중 하나에 대한 실질적인 정보를 담고 있으면 off_topic: false.
+     "지금까지 파악된 상담 상황"은 이 판단을 돕는 참고 자료로 쓰세요. 발화 내용이 9가지
+     주제와 표면적으로 관련 있어 보여도, 파악된 상담 상황과 명백히 무관한 화제
+     (예: 스포츠, 연예, 날씨 등)에 대한 것이라면 관련 없는 것으로 판단하세요.
+   - 위에 해당하지 않으면 off_topic: true.
+   - 판단이 애매하면 off_topic: true.
+
+2) resume_intent: 사용자가 상담사와의 상담 대화 자체를 하고 싶다는 의사를 명시적으로 표현했을 때만 true로 판단하세요
+   (예: "이제 상담할게요", "다시 진행해요", "상담 안 해요?").
+   - "다시", "돌아가다" 같은 표면적 키워드가 있다고 곧바로 true로 판단하지 말고, 실제로
+     지금 나누고 있는 상담 대화 자체를 재개하자는 의도인지를 확인하세요.
+   - 예를 들어 "다시 일상으로 돌아가고 싶어요", "예전처럼 지내고 싶어요"처럼 자신의 삶/생활/상태로 돌아가고 싶다는 표현은 목표에 대한 답변이지
+     resume_intent가 아니므로 false입니다.
+
+3) explicit_unknown: "사용자 마지막 발화"가 "방금 사용자에게 한 질문"에 대해 "잘 모르겠어요",
+   "글쎄요", "생각이 안 나요"처럼 명시적으로 모른다고 답한 경우에만 true로 판단하세요. 이 경우는
+   실질적인 정보가 없어 보여도 상담 질문에 대한 정당한 응답이므로 off_topic은 false로 판단하세요.
+
+출력 형식 (JSON, 다른 텍스트 없이): {{"off_topic": true 또는 false, "resume_intent": true 또는 false, "explicit_unknown": true 또는 false}}
+"""
+
+SILENT_EXTRACT_SYSTEM = "당신은 상담 대화에서 사실만 추출하는 분석기입니다. 지시된 JSON 형식으로만 응답하세요."
+
+SILENT_EXTRACT_TASK = """
+지금까지 파악된 상담 상황: {situation_context}
+사용자 마지막 발화: {user_utterance}
+
+아래 9개 항목 각각에 대해, "사용자 마지막 발화"에 포함된 사실들을 모두 포함하여 자연스럽게 1문장 이내로 요약해서 채우고, 없으면 null로 두세요. 
+발화에 없는 내용을 추측해서 만들어내지 마세요.
+모든 문장은 '-다'로 끝내지 말고 명사형 종결어미('-음/-임')로 작성하세요.
+  - 예시 사용자 발화: "AI 프로젝트를 하는데 아이디어 하나가 통할 것 같으면 며칠은 뭐든 다 할 수 있을 것 같다가, 갑자기 하루는 완전히 가라앉아요."
+  - 나쁜 예 (표면적 삭제·나열): "AI 프로젝트에서 아이디어가 통할 것 같다가 하루는 가라앉음"
+  - 좋은 예 (자연스러운 재구성): "AI 프로젝트를 하는 상황에서 아이디어가 좋아서 자신감이 넘치다가,
+    갑자기 기분이 가라앉음"
+
+판단 기준:
+- "지금까지 파악된 상담 상황"은 이번 발화가 상담 주제와 관련 있는지 판단하는 참고 자료일
+  뿐이지, 추출할 내용의 출처가 아닙니다. 오직 "사용자 마지막 발화" 자체에 새로 등장한 내용만 채우세요.
+- 발화가 지금까지 파악된 상담 상황과 직접 관련 있는지도 함께 고려하세요. 감정이나 의견이
+  표현되어 있어도, 파악된 상황과 무관한 화제에 대한 것이라면 채우지 마세요.
+- 겉으로 걱정이나 부정적 감정처럼 보이더라도 상담 상황의 원인이나 영향으로 억지로
+  연결짓지 마세요. 그 무관한 화제 자체에 대한 생각이나 감정을 thought/emotion 같은
+  항목에 그대로 옮겨 적지도 마세요 -- 무관한 화제는 통째로 무시하고 9개 항목 전부
+  null로 두세요.
+
+- situation: 상담을 하는 이유와 배경 상황 (신경쓰이는 상황 자체이지, 감정/행동/생각이 아님)
+- emotion: 지금까지 발생한 상담 상황에 대한 사용자의 감정 (느낌, 기분을 나타내는 표현)
+- behavior: 지금까지 발생한 상담 상황에서 반복되고 있는 행동 패턴이나 경향 (감정이나 생각이 아님)
+- impact: 지금까지 발생한 상담 상황이 일상에 미치는 구체적 영향
+- duration: 문제의 지속 기간과 빈도
+- coping: 문제를 해결하려고 과거에 시도한 방법
+- goal: 지금까지 발생한 상담 상황에서 사용자가 바라는, 기대하는 나아진 모습, 목표
+- cause: 문제가 발생한 이유에 대한 사용자의 생각
+- thought: 지금까지 발생한 상담 상황 대해 스스로 드는 생각
+
+출력 형식 (JSON, 다른 텍스트 없이, 아래 9개 key 모두 포함):
+{{"situation": "..." 또는 null, "emotion": "..." 또는 null, "behavior": "..." 또는 null,
+"impact": "..." 또는 null, "duration": "..." 또는 null, "coping": "..." 또는 null,
+"goal": "..." 또는 null, "cause": "..." 또는 null, "thought": "..." 또는 null}}
+"""
+
+OFFTOPIC_REPLY_TASK = """
 사용자 발화: {user_utterance}
 
-이 발화는 상담 내용과 무관한 잡담이거나 시스템 자체에 대한 질문입니다.
-
-아래 원칙을 지키며 응답하세요.
-- 사용자의 발화에 자연스럽고 짧게 반응합니다 (1~2문장).
-- 진단, 조언, 평가를 하지 않습니다.
-- 질환명, 진단명, 의학 용어를 말하지 않습니다.
-- 시스템에 대한 질문이면, "진단을 내리는 도구가 아니라 당신의 상황과 감정을 듣고 정리해드리는
-  상담 시스템"이라는 취지로 짧게 설명합니다. 없는 기능이나 역할을 지어내지 않습니다.
-- 다시 원래 이야기로 돌아오자는 뉘앙스로 마무리하되, 질문을 포함하지 않습니다
-  (원래 질문은 이 응답 뒤에 별도로 다시 물어봅니다).
-- 존댓말, 한국어만 사용, 60단어 이내.
+- 사용자의 발화에 대해 1-2문장으로 자연스럽고 짧게 반응하세요. 
+- 질문 또는 궁금하다는 의사를 절대 내비치지 하지 않습니다.
+- 시스템에 대한 질문이라면, 시스템에서 당신의 역할을 설명합니다. 없는 기능이나 역할을 지어내지 않습니다.
 
 출력 형식 (JSON, 다른 텍스트 없이): {{"message": "..."}}
 """
+# ─── REFLECTION ──────────
 
-# ─── gpt-4o-mini: slot extraction + off-topic detection, single call (step 3) ──
+REFLECT_TASK = """
+방금 사용자에게 한 질문: {bot_question}
+사용자 발화: {user_utterance}
 
-EXTRACT_AND_DETECT_SYSTEM = (
-    "당신은 상담 대화에서 사실만 추출하고 이탈 여부를 판단하는 분석기입니다. "
-    "지시된 JSON 형식으로만 응답하세요."
-)
+- 질문과 사용자의 발화에 담긴 내용/감정/상황이 있다면, 이를 1문장으로 짧고 자연스럽게 paraphrase하며 공감하세요. 
+- 질문과 발화에 없는 내용을 추측해서 만들어내지 마세요.
+- 공감한다, 동의한다라는 표현을 직접적으로 사용하지 마세요. 반어법처럼 느껴질 수 있는 문장을 사용하지 마세요. 
+- 질문은 하지 않습니다.
+- 공감이 불필요한 경우 reflection을 빈 문자열로 두세요.
 
-EXTRACT_AND_DETECT_TASK = """
-방금 사용자에게 한 질문: {pending_question}
-사용자 마지막 발화: {user_utterance}
-
-1) 아래 8개 항목 각각에 대해, 이번 발화에서 실제로 확인할 수 있는 내용이 있으면
-그 내용을 1문장 이내로 요약해서 채우고, 확인할 수 없으면 null로 두세요.
-이번 발화에 없는 내용을 추측해서 만들어내지 마세요.
-
-항목:
-- situation: 상담을 시작하게 된 마음이나 상황
-- thought: 힘든 순간에 스스로에게 떠오르는 생각이나 말
-- emotion: 이름 붙일 수 있는 감정 상태
-- behavior: 그 마음이 들 때 하게 되는 행동
-- impact: 일/관계/생활 리듬 등 일상에 미치는 영향
-- duration: 시작된 시기, 지속 기간, 빈도
-- coping: 스스로 시도해본 해결 방법
-- goal: 가벼워지고 싶은 부분, 원하는 변화
-
-2) 사용자의 발화가 위 질문에 대한 답변인지, 아니면 상담과 무관한 잡담(예: 날씨, 취미)이거나
-시스템 자체에 대한 질문(예: 너는 누구야, 뭘 할 수 있어, 이거 어떻게 작동해)인지 판단하세요.
-질문에 대한 답변으로 볼 수 있으면 off_topic: false, 무관한 발화이면 off_topic: true로 판단하세요.
-명확하지 않으면 false로 판단하세요.
-off_topic이 true이면 1)의 모든 항목은 null로 두세요.
-
-출력 형식 (JSON, 다른 텍스트 없이, 아래 9개 key 모두 포함):
-{{"situation": "..." 또는 null, "thought": "..." 또는 null, "emotion": "..." 또는 null,
-"behavior": "..." 또는 null, "impact": "..." 또는 null, "duration": "..." 또는 null,
-"coping": "..." 또는 null, "goal": "..." 또는 null, "off_topic": true 또는 false}}
+출력 형식 (JSON, 다른 텍스트 없이): {{"reflection": "..."}}
 """
 
-# ─── gpt-4o-mini: pattern rerank (step 4b) ──────────────────────────────────
-# candidates come pre-filtered by embedding similarity (step 4a); this call only
-# reorders/scores that shortlist by textual fit, it never expands the candidate set
+# ─── SLOT  ──────────────────────────────
 
-PATTERN_RERANK_SYSTEM = (
-    "당신은 상담 대화 내용과 어려움의 흐름 설명을 비교해 적합도를 판단하는 평가자입니다. "
+EXTRACT_AND_QUESTION_TASK = """
+직전에 사용자에게 한 질문의 의도: {previous_question_intent}
+이번 턴에 답변 대상이 된 슬롯: {target_slot_key}
+사용자 마지막 발화: {user_utterance}
+
+1) 아래 9개 항목 각각에 대해, "사용자의 마지막 발화"에 포함된 사실들을 모두 포함하여 자연스럽게 1문장 이내로 요약해서 채우고, 없으면 null로 두세요. 이번 발화는 위 "직전 질문의 의도"에 대한 답변이니 그 슬롯을 우선으로 채우세요. 각 항목은 서로 다른 내용을 다루니, 한
+항목에 해당하는 내용을 다른 항목에 채우지 마세요. 이번 발화에 없는 내용을 추측해서
+만들어내지 마세요. 모든 문장은 '-다'로 끝내지 말고 명사형 종결어미('-음/-임')로 작성하세요.
+자연스러운 요약이란 발화에서 단어만 잘라내 그대로 이어붙이는 것이 아니라, 발화에 담긴
+흐름(전환, 인과, 정도)을 살려 하나의 서술로 재구성하는 것입니다. 
+  - 예시 사용자 발화: "AI 프로젝트를 하는데 아이디어 하나가 통할 것 같으면 며칠은 뭐든 다 할 수 있을 것 같다가, 갑자기 하루는 완전히 가라앉아요."
+  - 나쁜 예 (표면적 삭제·나열): "AI 프로젝트에서 아이디어가 통할 것 같다가 하루는 가라앉음"
+  - 좋은 예 (자연스러운 재구성): "AI 프로젝트를 하는 상황에서 아이디어가 좋아서 자신감이 넘치다가,
+    갑자기 기분이 가라앉음"
+- situation: 상담을 하는 이유와 배경 상황 (신경쓰이는 상황 자체이지, 감정/행동/생각이 아님)
+- emotion: 사용자의 감정 (느낌, 기분을 나타내는 표현)
+- behavior: 현재 반복되고 있는 행동 패턴이나 경향 (감정이나 생각이 아님)
+- impact: 문제가 일상에 미치는 구체적 영향
+- duration: 문제의 지속 기간과 빈도
+- coping: 문제를 해결하려고 과거에 시도한 방법
+- goal: 사용자가 바라는, 기대하는 나아진 모습, 목표
+- cause: 문제가 발생한 이유에 대한 사용자의 생각
+- thought: 문제에 대해 스스로 드는 생각
+
+2) explicit_unknown: "사용자 마지막 발화"가 "직전에 사용자에게 한 질문의 의도"에 대해
+"잘 모르겠어요", "글쎄요", "생각이 안 나요"처럼 명시적으로 모른다고 답한 경우에만 true로
+판단하세요. 단순히 그 주제에 대한 언급이 없는 경우(null)와는 다릅니다 -- 명시적으로
+모른다고 말했을 때만 true입니다.
+
+3) 다음으로 확인할 내용: {slot_goal}
+이미 확인한 내용: {already_asked}
+위 "다음으로 확인할 내용"만 자연스러운 한국어 질문 1문장으로 바꿔 question에 담으세요.
+already_asked와 같은 의미를 다시 묻지 말고, 새로운 주제를 추가하지 마세요.
+주의: 이 3)번 항목은 오직 question 필드를 만드는 데만 사용하세요 -- 1)번의 9개 항목을
+채울 때 "다음으로 확인할 내용"에 이끌려 이번 발화를 거기에 억지로 끼워 맞추지 마세요.
+
+출력 형식 (JSON, 다른 텍스트 없이, 아래 11개 key 모두 포함):
+{{"situation": "..." 또는 null, "emotion": "..." 또는 null, "behavior": "..." 또는 null,
+"impact": "..." 또는 null, "duration": "..." 또는 null, "coping": "..." 또는 null,
+"goal": "..." 또는 null, "cause": "..." 또는 null, "thought": "..." 또는 null,
+"explicit_unknown": true 또는 false,
+"question": "이번에 확인할 내용만 묻는 질문 1문장"}}
+"""
+
+# ─── SUFFICIENCY CHECK (분리된 호출) ──────────────────────────────
+# 이번 턴에 답변 대상이 된 슬롯에 값이 채워졌을 때만 호출한다 (target_slot_key가
+# "(없음)"이거나 값이 null이면 EXTRACT_AND_QUESTION 단계에서 이미 sufficient: true로
+# 취급하고 이 호출 자체를 건너뛴다). 슬롯별 카테고리 표 전체를 매번 보내는 대신
+# 판단 대상 슬롯 하나의 카테고리만 골라 보내 프롬프트 길이를 줄인다.
+
+SUFFICIENCY_CHECK_SYSTEM = "당신은 상담 대화에서 슬롯 값이 충분히 구체적인지 판단하는 분석기입니다. 지시된 JSON 형식으로만 응답하세요."
+
+MISSING_ASPECT_CATEGORIES = {
+    "situation": """- 지시어만_있음 (예: "그거 때문에요", "아까 말한 그 일이요")
+- 너무_포괄적 (예: "그냥 요즘 다 힘들어서요", "일이 잘 안 풀려서요")
+- sufficient 대조 예: "팀 프로젝트에서 제가 맡은 발표 자료가 계속 늦어져서 팀원들 눈치가 보이는 상황이에요\"""",
+    "emotion": """- 포괄적_감정어 (예: "그냥 안 좋아요", "기분이 복잡해요")
+- 감정_대신_상황_반복 (예: "그냥 일이 계속 밀려서요" — 감정이 아니라 상황을 다시 말함)
+- sufficient 대조 예: "무기력하고 불안한 느낌이 들어요\"""",
+    "behavior": """- 행동_없이_상태만 (예: "그냥 힘이 없어요", "의욕이 없어요" — 행동이 아니라 상태만 있음)
+- sufficient 대조 예: "마감이 다가오면 오히려 일을 미루고 계속 딴짓을 하게 돼요\"""",
+    "impact": """- 영향_범위_불명 (예: "그냥 안 좋은 영향이 있는 것 같아요")
+- sufficient 대조 예: "밤에 잠을 잘 못 자서 다음날 회사에서 집중을 못 해요\"""",
+    "duration": """- 기간_모호 (예: "꽤 오래 됐어요", "예전부터요")
+- 빈도_모호 (예: "가끔요", "자주 그래요")
+- sufficient 대조 예: "한 3개월 전부터 거의 매일 그래요\"""",
+    "coping": """- 시도여부만_있음 (예: "이것저것 해봤어요")
+- 효과_정보_없음 (예: "산책을 좀 해봤어요" — 무엇을 했는지는 있지만 효과가 있었는지는 없음)
+- sufficient 대조 예: "명상 앱을 써봤는데 처음엔 도움이 됐다가 요즘은 잘 안 돼요\"""",
+    "goal": """- 너무_추상적 (예: "그냥 행복해지고 싶어요", "편해지고 싶어요")
+- sufficient 대조 예: "일을 미루지 않고 마감 전에 여유 있게 끝내고 싶어요\"""",
+    "cause": """- 귀인_불명 (예: "잘 모르겠는데 그냥 그런 것 같아요", "성격 탓인가 싶어요")
+- sufficient 대조 예: "완벽하게 하려는 마음 때문에 시작을 계속 미루게 되는 것 같아요\"""",
+    "thought": """- 생각_대신_감정만 (예: "그냥 답답해요" — 생각이 아니라 감정만 있음)
+- 평가적_짧은_답 (예: "제가 부족한 것 같아요", "한심해요" — 짧은 자기평가만 있고 구체적 생각이 없음)
+- sufficient 대조 예: "이 정도밖에 못 하는 내가 팀에 폐를 끼치고 있다는 생각이 계속 들어요\"""",
+}
+
+SUFFICIENCY_CHECK_TASK = """
+판단 대상 슬롯: {target_slot_key}
+슬롯 값: "{slot_value}"
+
+아래 카테고리 기준으로 이 슬롯 값이 충분히 구체적인지 판단하세요.
+- 충분히 구체적이면 sufficient: true, missing_aspect: null.
+- 아래 카테고리 중 하나에 해당할 만큼 불충분하면 sufficient: false, missing_aspect에는
+  해당 카테고리 라벨을 아래 목록에 있는 문자열 그대로 적으세요 (다른 텍스트 금지).
+
+[카테고리 및 예시]
+{missing_aspect_categories}
+
+출력 형식 (JSON, 다른 텍스트 없이): {{"sufficient": true 또는 false, "missing_aspect": "..." 또는 null}}
+"""
+
+NEXT_QUESTION_TASK = """
+다음으로 확인할 내용: {slot_goal}
+이미 확인한 내용: {already_asked}
+
+위 "다음으로 확인할 내용"만 자연스러운 한국어 질문 1문장으로 바꿔 question에 담으세요.
+already_asked와 같은 의미를 다시 묻지 말고, 새로운 주제를 추가하지 마세요.
+
+출력 형식 (JSON, 다른 텍스트 없이): {{"question": "이번에 확인할 내용만 묻는 질문 1문장"}}
+"""
+
+# mode="thin_retry" variant of the next-question call -- fires when the user's
+# answer filled the slot but was judged too thin (sufficient=false).
+# THIN_RETRY_ASPECT_GUIDANCE holds one guidance line per missing_aspect label;
+# nodes.py picks only the single entry that matches this turn's missing_aspect
+# and injects it below, instead of dumping all 13 labels into every call --
+# with all 13 present the model would drift onto an unrelated axis (e.g. asking
+# about duration when the actual miss was situation/너무_포괄적).
+THIN_RETRY_ASPECT_GUIDANCE = {
+    "지시어만_있음": "언제·어디서·누구와 있었던 어떤 일인지 구체적 사건을 물으세요.",
+    "너무_포괄적": "언제·어디서·누구와 있었던 어떤 일인지 구체적 사건을 물으세요.",
+    "포괄적_감정어": "구체적으로 어떤 감정(무기력, 불안, 서운함 등)인지 물으세요. 상황을 다시 묻지 마세요.",
+    "감정_대신_상황_반복": "구체적으로 어떤 감정인지 물으세요. 상황을 다시 묻지 마세요.",
+    "행동_없이_상태만": (
+        "그 상태일 때 실제로 무엇을 하게 되는지(피하는지, 미루는지, 반복하는 행동이 있는지) "
+        "물으세요. 그 행동을 \"왜\" 하는지 이유는 cause 슬롯의 몫이니 묻지 마세요."
+    ),
+    "영향_범위_불명": "수면, 대인관계, 학업/업무 등 구체적으로 어느 영역에 어떤 영향이 있는지 물으세요.",
+    "기간_모호": "정확한 기간(예: 몇 주째, 몇 개월째)을 물으세요.",
+    "빈도_모호": "정확한 빈도(예: 하루에 몇 번, 일주일에 며칠)를 물으세요.",
+    "시도여부만_있음": "구체적으로 무엇을 시도했는지 물으세요.",
+    "효과_정보_없음": "그 시도가 효과가 있었는지 물으세요.",
+    "너무_추상적": "구체적으로 무엇이 달라지길 원하는지 물으세요.",
+    "귀인_불명": "스스로 생각하는 원인이 무엇인지 물으세요.",
+    "생각_대신_감정만": "감정 말고 구체적으로 어떤 생각이 드는지 물으세요.",
+    "평가적_짧은_답": "감정 말고 구체적으로 어떤 생각이 드는지 물으세요.",
+}
+
+THIN_RETRY_QUESTION_TASK = """
+사용자가 아래 슬롯에 대해 방금 답변했지만, 아직 구체성이 부족합니다.
+
+슬롯 의도: {slot_goal}
+사용자의 방금 답변: {user_last_answer}
+부족한 부분(missing_aspect): {missing_aspect}
+이 부분에서 파고들어야 할 것: {aspect_guidance}
+
+위에서 지시한 것 하나만 질문 1문장으로 만들어 question에 담으세요.
+
+[규칙]
+- 질문은 정확히 1개만 작성한다.
+- "사용자의 방금 답변"에 이미 담긴 내용은 다시 묻지 않는다.
+- 위에서 지시한 것 외의 다른 내용(다른 슬롯, "왜" 그런지의 이유 등)은 새로 묻지 않는다.
+- 지금까지의 상황을 언급할 때는 원문을 그대로 인용하지 말고 "지금 겪고 계신 상황에서"처럼
+  일반화된 표현을 사용한다.
+
+출력 형식 (JSON, 다른 텍스트 없이): {{"question": "지시받은 것만 파고드는 질문 1문장"}}
+"""
+
+# ─── CONSOLIDATE ──────────────────────────────────────
+
+CONSOLIDATE_SYSTEM = "당신은 상담 대화에서 슬롯별로 누적된 내용을 정리하는 어시스턴트입니다. 지시된 JSON 형식으로만 응답하세요."
+
+CONSOLIDATE_TASK = """
+아래는 상담 대화 전체에서 각 슬롯별로 누적된 원본 조각들입니다. 각 슬롯을
+자연스러운 1~2문장으로 정리하세요.
+
+규칙:
+- 의미가 겹치거나 거의 동일한 표현은 하나로 합치세요.
+- 서로 다른 뉘앙스나 새로운 정보를 담은 조각(예: "우울함과 공허함"과 "지침"처럼
+  겹치지만 완전히 같지는 않은 표현)은 정보를 누락시키지 말고 자연스럽게 이어 붙이세요.
+- 원본에 없는 내용을 추측해서 추가하지 마세요.
+- 모든 문장은 '-다'로 끝내지 말고 명사형 종결어미('-음/-임')로 작성하세요.
+
+situation: {situation}
+emotion: {emotion}
+behavior: {behavior}
+impact: {impact}
+duration: {duration}
+coping: {coping}
+goal: {goal}
+cause: {cause}
+thought: {thought}
+
+출력 형식 (JSON, 다른 텍스트 없이, 9개 key 모두 포함):
+{{"situation": "...", "emotion": "...", "behavior": "...", "impact": "...",
+"duration": "...", "coping": "...", "goal": "...", "cause": "...", "thought": "..."}}
+"""
+
+# ─── SELF_HELP ─────────────────────────────────
+
+SELF_HELP_RERANK_SYSTEM = (
+    "당신은 사용자 상황에 맞는 자가관리 방법을 선별하는 평가자입니다. "
     "지시된 JSON 형식으로만 응답하세요."
 )
 
-PATTERN_RERANK_TASK = """
+SELF_HELP_RERANK_TASK = """
 사용자에게서 확인된 내용:
 - 생각: {thought}
 - 감정: {emotion}
 - 행동: {behavior}
+- 과거 시도: {coping}
+- 목표: {goal}
 
-아래는 후보로 압축된 어려움의 흐름 설명들입니다.
+아래는 매칭된 어려움의 흐름들에서 모아온 자가관리 방법 후보들입니다.
 
 후보:
 {candidate_block}
 
-각 후보에 대해 사용자의 생각-감정-행동 흐름과 얼마나 잘 맞는지 0.0~1.0 사이 점수로 판단하세요.
-설명에 나온 단서 문구와 표면적으로 겹치는 단어가 있는지가 아니라, 사용자가 실제로 겪고 있는
-흐름이 그 설명이 가리키는 것과 같은 종류인지를 기준으로 판단하세요.
+각 후보가 사용자의 상황에 얼마나 도움이 될지 0.0~1.0 사이 점수로 판단하세요.
+사용자가 이미 시도했다고 말한 방법과 겹치거나 사용자의 목표와 관련 없는 항목은 낮은 점수를 주세요.
 전달받은 후보 전체에 대해 점수를 매기고, 점수가 높은 순으로 정렬해서 출력하세요.
 
 출력 형식 (JSON, 다른 텍스트 없이):
-{{"ranked": [{{"pattern_id": "...", "score": 0.0~1.0}}, ...]}}
+{{"ranked": [{{"self_help_id": "...", "score": 0.0~1.0}}, ...]}}
 """
 
-# ─── gpt-4o-mini: supervisor, controlled agent (step 6) ─────────────────────
-# the model only ever selects a target_slot from the fixed intake catalog built by
-# code -- it never composes new question content, that stays Qwen's job downstream
-
-SUPERVISOR_SYSTEM = (
-    "당신은 상담 대화의 다음 행동을 정하는 controlled agent입니다. "
-    "반드시 제공된 선택지 중에서만 고르고, 지시된 JSON 형식으로만 응답하세요."
-)
-
-SUPERVISOR_TASK = """
-지금까지 확인된 내용:
-{slot_summary}
-
-이미 물어본 slot: {asked_slots}
-현재 turn 수: {turn_count}
-
-선택 가능한 다음 행동:
-{allowed_actions_block}
-
-위 선택지 중에서만 다음 행동을 정하세요. ask_intake_question을 고를 경우 target_slot과
-question_intent는 반드시 위에 제시된 선택지 중 하나를 그대로 사용하세요.
-새로운 질문 내용을 만들어내지 마세요.
-
-출력 형식 (JSON, 다른 텍스트 없이):
-{{"next_action": "ask_intake_question 또는 recommend_self_help 또는 end",
-"target_slot": "..." 또는 null, "question_intent": "..." 또는 null, "reason": "선택 이유 1문장"}}
-"""
-
-# ─── gpt-4o-mini: summary, general path (step 8) ────────────────────────────
-# force_end tone branch is a separate follow-up prompt, not yet added here
+# ─── SUMMARY ────────────────────────────
 
 SUMMARY_SYSTEM = "당신은 상담 요약을 작성하는 어시스턴트입니다. 지시된 JSON 형식으로만 응답하세요."
 
@@ -232,23 +371,27 @@ SUMMARY_TASK = """
 목표: {goal}
 
 참고할 어려움의 흐름 설명(그대로 인용하지 말고 서술에 녹여서 사용): {pattern_descriptions}
-제안할 자가관리 방법: {self_help_context}
+제안할 자가관리 방법 후보: {self_help_context}
 
-위 내용을 바탕으로 다음 순서로 상담 요약을 작성하세요.
-1. 대화 내용을 공감적으로 요약 (2~3문장)
-2. 어려움의 흐름을 서술형으로 정리 (패턴 이름, 진단 용어, 증상 라벨을 그대로 언급하지 않음)
-3. 자가관리 제안 (구체적인 다음 행동 1~2가지)
-
-규칙:
-- "당신은 ~형입니다", "~증상이 있습니다" 같은 단정적 진단 문구를 사용하지 않습니다.
-- "~한 흐름이 보이네요", "~해보면 도움이 될 수 있어요" 같은 잠정적 어조를 사용합니다.
-- 질환명, 증상 라벨, 점수를 언급하지 않습니다.
+위 내용을 바탕으로 다음 순서로 상담 요약을 작성하세요. 1~3번 각 항목 사이에는 빈 줄을 하나씩 넣어 구분하세요.
+1. 대화 내용을 공감적으로 요약 (2~3문장). 같은 내용을 중복해서 서술하지 마세요. 
+2. 자가관리 제안
+   - 아래 두 조건을 모두 만족하는 방법만, 그중 가장 도움이 될 순서로 최대 2개까지 선택하세요.
+     · 과거 시도(coping)에서 이미 언급된 방법과 겹치지 않을 것
+     · 상담 대화 맥락(상황·생각·행동·목표)을 해결하는 데 실질적으로 도움이 될 것
+     두 조건을 만족하는 방법이 하나도 없으면 자가관리 제안 없이 2번 항목에서 요약을 마치세요.
+   - 각 방법은 "• [방법 이름]"으로 시작하고, 방법과 방법 사이에는 빈 줄을 하나 삽입하세요.
+   - 방법마다 다음 두 부분을 이 순서로 쓰세요.
+     1. 추천 이유(1~2문장, 하나의 흐름으로 연결): 방법의 의도와 메시지를 그대로 옮기지 말고,
+        사용자가 말한 구체적인 상황·생각·행동({situation}, {thought}, {behavior})을 예로 들어
+        "왜 이 사용자에게 필요한지"를 새로 쓰세요. 사용자 상황과 직접 관련 없는 내용은 제외하세요. 
+     2. 실행 방법("-"로 시작하는 줄, 방법 제목의 "•"와 다른 기호로 구분): 원문 실행 단계를
+        그대로 옮기지 말고, 사용자의 상황에 맞는 구체적인 예시를 넣어 핵심 단계만 간결하게
+        재작성하세요.
 
 출력 형식 (JSON, 다른 텍스트 없이): {{"summary": "..."}}
 """
 
-# ─── done stage: fixed text, no LLM call ────────────────────────────────────
-# shown for any message after the summary has already been generated once, instead
-# of silently regenerating a new summary on every stray post-session message
+# ─── done stage ────────────────────────────────────
 
 SESSION_CLOSED_MESSAGE = "오늘 이야기 나눠주셔서 감사해요. 여기서 상담을 마칠게요."
