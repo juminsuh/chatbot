@@ -1,11 +1,11 @@
 import time
 
 from langgraph.graph import END, START, StateGraph
+from debug import debug_print
 from state import SessionState
 from nodes import (
     rapport_node,
     render_question_node,
-    extract_and_detect_node,
     pattern_mapping_node,
     gate_check_node,
     consolidate_slots_node,
@@ -15,11 +15,9 @@ from nodes import (
 from router import (
     route_entry,
     route_after_rapport,
-    route_after_extract,
     route_after_gate,
     ENTRY_MAP,
     AFTER_RAPPORT_MAP,
-    AFTER_EXTRACT_MAP,
     AFTER_GATE_MAP,
 )
 
@@ -32,7 +30,7 @@ def _timed(name, fn):
         start = time.perf_counter()
         result = fn(state)
         elapsed = time.perf_counter() - start
-        print(f"[TIMING DEBUG] node '{name}': {elapsed:.3f}s")
+        debug_print(f"[TIMING DEBUG] node '{name}': {elapsed:.3f}s")
         return result
     return wrapped
 
@@ -42,7 +40,6 @@ def build_graph():
 
     g.add_node("rapport", _timed("rapport", rapport_node))
     g.add_node("render_question", _timed("render_question", render_question_node))
-    g.add_node("extract_and_detect", _timed("extract_and_detect", extract_and_detect_node))
     g.add_node("pattern_mapping", _timed("pattern_mapping", pattern_mapping_node))
     g.add_node("gate_check", _timed("gate_check", gate_check_node))
     g.add_node("consolidate_slots", _timed("consolidate_slots", consolidate_slots_node))
@@ -52,7 +49,6 @@ def build_graph():
     g.add_conditional_edges(START, route_entry, ENTRY_MAP)
     g.add_conditional_edges("rapport", route_after_rapport, AFTER_RAPPORT_MAP)
 
-    g.add_conditional_edges("extract_and_detect", route_after_extract, AFTER_EXTRACT_MAP)
     g.add_edge("render_question", "gate_check")
     g.add_conditional_edges("gate_check", route_after_gate, AFTER_GATE_MAP)
     g.add_edge("consolidate_slots", "pattern_mapping")

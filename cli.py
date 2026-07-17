@@ -6,6 +6,7 @@ python cli.py
 import argparse
 import time
 
+from debug import debug_print, set_debug
 from graph import get_graph
 from pattern_matching import warmup
 from state import new_session
@@ -17,16 +18,13 @@ def _str2bool(value: str) -> bool:
 
 def _print_debug(state: dict) -> None:
     print(
-        f"  [stage={state['stage']} turn_count={state['turn_count']} off_topic={state['off_topic']} "
+        f"  [stage={state['stage']} turn_count={state['turn_count']} "
         f"pattern_final={state['pattern_final']} gate={state['gate']}]"
     )
     for slot, values in state["slots"].items():
         content = " / ".join(values) if values else "X"
         print(f"    - {slot}: {content}")
-    print(
-        f"  [offtopic_streak={state.get('offtopic_streak')} "
-        f"pending(target_slot/question_intent)={state.get('pending')}]"
-    )
+    print(f"  [pending(target_slot/question_intent)={state.get('pending')}]")
     print(f"  [asked_slots={state.get('asked_slots')}]")
 
 
@@ -34,6 +32,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", type=_str2bool, default=False)
     args = parser.parse_args()
+    set_debug(args.debug)
 
     graph = get_graph()
     name = input("닉네임을 입력해주세요: ").strip()
@@ -60,7 +59,7 @@ def main() -> None:
         turn_start = time.perf_counter()
         state = graph.invoke(state)
         elapsed = time.perf_counter() - turn_start
-        print(f"[TIMING DEBUG] 응답 생성까지 걸린 시간: {elapsed:.2f}초")
+        debug_print(f"[TIMING DEBUG] 응답 생성까지 걸린 시간: {elapsed:.2f}초")
         print(f"\n상담사: {state['bot_message']}\n")
         if args.debug:
             _print_debug(state)

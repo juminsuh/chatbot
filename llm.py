@@ -1,8 +1,7 @@
 """LLM wrappers.
 
-gpt-4o-mini handles everything: slot extraction, off-topic detection, pattern
-rerank, supervisor routing, off-topic chat replies, question rendering, and
-the final summary.
+gpt-5.4-mini (via the Responses API) handles everything: slot extraction,
+pattern rerank, question rendering, and the final summary.
 """
 import json
 import re
@@ -13,7 +12,7 @@ from openai import OpenAI
 
 load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL = "gpt-5.4-mini"
 
 _openai_client = None
 
@@ -38,15 +37,13 @@ def _parse_json(text: str) -> dict:
         return {}
 
 
-def call_openai_json(system: str, user: str, temperature: float = 0.3) -> dict:
+def call_openai_json(system: str, user: str, reasoning_effort: str = "none") -> dict:
     client = _get_openai_client()
-    response = client.chat.completions.create(
+    response = client.responses.create(
         model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        response_format={"type": "json_object"},
-        temperature=temperature,
+        instructions=system,
+        input=user,
+        reasoning={"effort": reasoning_effort},
+        text={"format": {"type": "json_object"}},
     )
-    return _parse_json(response.choices[0].message.content)
+    return _parse_json(response.output_text)
