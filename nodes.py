@@ -1,14 +1,13 @@
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from data import get_pattern, get_self_help, self_help_context
-from debug import debug_print, is_debug
+from data import VALUE_IDS, get_value, value_list_text
+from debug import debug_print
 from gate import compute_gate
-from pattern_matching import match_pattern
 from state import (
     SessionState,
     SLOT_ORDER,
-    PATTERN_MATCH_SLOTS,
     SLOT_QUESTION_TEMPLATES,
     SLOT_KOREAN_LABELS,
     EXPLICIT_UNKNOWN_VALUE,
@@ -16,7 +15,6 @@ from state import (
 )
 from llm import call_openai_json
 import prompts
-SELF_HELP_TOP_K = 3
 
 
 def _timed_llm_call(label: str, system: str, user: str, **kwargs) -> dict:
@@ -237,7 +235,26 @@ def render_question_node(state: SessionState) -> dict:
             target_slot = next_slot
             question_intent = next_question_intent
 
-        if target_slot == next_slot and speculative_question is not None:
+        if (
+            target_slot not in state["asked_slots"]
+            and slots[target_slot]
+            and retry_count.get(target_slot, 0) == 0
+        ):
+            # never asked about this slot directly, but it already has
+            # content picked up incidentally while answering a different
+            # slot's question -- treat that as Incomplete right away instead
+            # of asking a plain generic question first
+            retry_count[target_slot] = retry_count.get(target_slot, 0) + 1
+            slot_value = slots[target_slot][-1]
+            aspect_guidance = prompts.DETAIL_GUIDANCE["질문 전에 부수적으로 언급됨"]
+            question = _generate_question(
+                "detail",
+                slot_goal=question_intent,
+                user_last_answer=slot_value,
+                missing_aspect="질문 전에 부수적으로 언급됨",
+                aspect_guidance=aspect_guidance,
+            ) or question_intent
+        elif target_slot == next_slot and speculative_question is not None:
             question = speculative_question
         else:
             question = _generate_question(
@@ -271,6 +288,57 @@ def gate_check_node(state: SessionState) -> dict:
     return {"gate": compute_gate(state)}
 
 
+def _parse_value_selection(user_utterance: str) -> list[str] | None:
+    seen: list[int] = []
+    for token in re.findall(r"\d+", user_utterance):
+        n = int(token)
+        if 1 <= n <= len(VALUE_IDS) and n not in seen:
+            seen.append(n)
+    if len(seen) != 5:
+        return None
+    return [VALUE_IDS[n - 1] for n in seen]
+
+
+def values_node(state: SessionState) -> dict:
+    # gate_check can flip coverage_ok True and fall through to this node
+    # within the same invoke() call that just processed the answer to the
+    # *last loop slot* -- state["user_input"] at that point is still that
+    # slot's answer, not a reply to the values question. Key off
+    # values_prompted (only ever set True after this node has actually
+    # paused and returned control to the user) instead of user_input's mere
+    # presence, so that stale input is never mistaken for a values answer.
+    if not state.get("values_prompted"):
+        message = prompts.VALUES_INTRO.format(name=state["name"], value_list=value_list_text())
+        return {
+            "bot_message": message,
+            "stage": "values",
+            "values_prompted": True,
+            "conversation_log": _log(state, "bot", message),
+        }
+
+    user_input = state.get("user_input") or ""
+    log = _log(state, "user", user_input)
+    selected = _parse_value_selection(user_input)
+
+    if selected is None:
+        message = prompts.VALUES_RETRY
+        return {
+            "bot_message": message,
+            "stage": "values",
+            "conversation_log": log + [{"role": "bot", "content": message}],
+        }
+
+    print("[선택된 가치]")
+    for vid in selected:
+        v = get_value(vid)
+        print(f"  - {v['name_ko']} ({v['name_en']})")
+
+    return {
+        "selected_values": selected,
+        "conversation_log": log,
+    }
+
+
 # placeholder-ish non-answers the consolidate model sometimes emits when a
 # slot had no real content -- these must not be accepted as genuine content
 _NULL_LIKE_VALUES = {"없음", "(없음)", "null", "none", "-"}
@@ -302,88 +370,16 @@ def consolidate_slots_node(state: SessionState) -> dict:
     return {"slots": consolidated}
 
 
-def pattern_mapping_node(state: SessionState) -> dict:
-    slots = state["slots"]
-    if not any(slots[slot] for slot in PATTERN_MATCH_SLOTS):
-        return {
-            "pattern_candidates": [],
-            "pattern_final": [],
-        }
-
-    thought_text = " ".join(slots["thought"]) or "(없음)"
-    emotion_text = " ".join(slots["emotion"]) or "(없음)"
-    behavior_text = " ".join(slots["behavior"]) or "(없음)"
-    debug_print(f"[PATTERN MATCH DEBUG] thought={thought_text!r} emotion={emotion_text!r} behavior={behavior_text!r}")
-
-    match_start = time.perf_counter()
-    match = match_pattern(thought_text, emotion_text, behavior_text, verbose=is_debug())
-    debug_print(f"[TIMING DEBUG] pattern match (embedding): {time.perf_counter() - match_start:.3f}s")
-    debug_print(
-        f"[PATTERN MATCH DEBUG] best match: {match['pattern_id']} (score={match['score']:.4f}): "
-        f"{get_pattern(match['pattern_id'])['description']}"
-    )
-
-    return {
-        "pattern_candidates": match["scores"],
-        "pattern_final": [{"pattern_id": match["pattern_id"], "score": match["score"]}],
-    }
+def _format_selected_values(value_ids: list[str]) -> str:
+    lines = []
+    for vid in value_ids:
+        v = get_value(vid)
+        lines.append(f"- {v['name_ko']} ({v['name_en']}): {v['definition']}")
+    return "\n".join(lines)
 
 
-def _format_self_help_candidate_block(self_help_ids: list[str]) -> str:
-    blocks = []
-    for sid in self_help_ids:
-        item = get_self_help(sid)
-        blocks.append(
-            f"[{sid}]\n"
-            f"제목: {item['title']}\n"
-            f"의도: {item['intent']}\n"
-            f"적용 상황: {', '.join(item['use_when'])}"
-        )
-    return "\n\n".join(blocks)
-
-
-def _rerank_self_help(self_help_ids: list[str], slots) -> list[str]:
-    if len(self_help_ids) <= SELF_HELP_TOP_K:
-        return self_help_ids
-
-    candidate_ids = set(self_help_ids)
-    result = _timed_llm_call(
-        "SELF_HELP_RERANK",
-        prompts.SELF_HELP_RERANK_SYSTEM,
-        prompts.SELF_HELP_RERANK_TASK.format(
-            thought=" ".join(slots["thought"]) or "(없음)",
-            emotion=" ".join(slots["emotion"]) or "(없음)",
-            behavior=" ".join(slots["behavior"]) or "(없음)",
-            coping=" ".join(slots["coping"]) or "(없음)",
-            goal=" ".join(slots["goal"]) or "(없음)",
-            candidate_block=_format_self_help_candidate_block(self_help_ids),
-        ),
-    )
-    ranked = [
-        r["self_help_id"] for r in result.get("ranked", [])
-        if isinstance(r, dict) and r.get("self_help_id") in candidate_ids
-    ]
-    if not ranked:
-        return self_help_ids[:SELF_HELP_TOP_K]
-    return ranked[:SELF_HELP_TOP_K]
-
-
-def self_help_node(state: SessionState) -> dict:
-    self_help_ids: list[str] = []
-    for match in state["pattern_final"]:
-        for sid in get_pattern(match["pattern_id"])["self_help_ids"]:
-            if sid not in self_help_ids:
-                self_help_ids.append(sid)
-    debug_print(f"[RAG DEBUG] self_help_ids candidates: {self_help_ids}")
-
-    self_help_ids = _rerank_self_help(self_help_ids, state["slots"])
-    debug_print(f"[RAG DEBUG] self_help_ids after rerank (top-{SELF_HELP_TOP_K}): {self_help_ids}")
-    debug_print(f"[RAG DEBUG] self_help_context:\n{self_help_context(self_help_ids)}")
-    return {"self_help_ids": self_help_ids}
-
-
-def summary_node(state: SessionState) -> dict:
-    if state.get("summary"):
+def insight_report_node(state: SessionState) -> dict:
+    if state.get("report"):
         user_input = state.get("user_input") or ""
         log = list(state["conversation_log"])
         if user_input:
@@ -392,16 +388,11 @@ def summary_node(state: SessionState) -> dict:
         return {"bot_message": prompts.SESSION_CLOSED_MESSAGE, "conversation_log": log}
 
     slots = state["slots"]
-    pattern_descriptions = "\n".join(
-        get_pattern(p["pattern_id"])["description"] for p in state["pattern_final"]
-    )
-    debug_print(f"[RAG DEBUG] pattern_descriptions fed into summary prompt:\n{pattern_descriptions or '(없음)'}")
-    debug_print(f"[RAG DEBUG] self_help_context fed into summary prompt:\n{self_help_context(state['self_help_ids']) or '(없음)'}")
 
     result = _timed_llm_call(
-        "SUMMARY",
-        prompts.SUMMARY_SYSTEM,
-        prompts.SUMMARY_TASK.format(
+        "INSIGHT_REPORT",
+        prompts.INSIGHT_REPORT_SYSTEM,
+        prompts.INSIGHT_REPORT_TASK.format(
             situation=" ".join(slots["situation"]) or "(없음)",
             thought=" ".join(slots["thought"]) or "(없음)",
             emotion=" ".join(slots["emotion"]) or "(없음)",
@@ -409,18 +400,19 @@ def summary_node(state: SessionState) -> dict:
             behavior=" ".join(slots["behavior"]) or "(없음)",
             impact=" ".join(slots["impact"]) or "(없음)",
             duration=" ".join(slots["duration"]) or "(없음)",
+            relationship=" ".join(slots["relationship"]) or "(없음)",
             coping=" ".join(slots["coping"]) or "(없음)",
             goal=" ".join(slots["goal"]) or "(없음)",
-            pattern_descriptions=pattern_descriptions or "(없음)",
-            self_help_context=self_help_context(state["self_help_ids"]),
+            self_message=" ".join(slots["self_message"]) or "(없음)",
+            values=_format_selected_values(state["selected_values"]),
         ),
-        reasoning_effort="low",
+        reasoning_effort="medium",
     )
-    summary = str(result.get("summary", "")).strip()
+    report = str(result.get("report", "")).strip()
 
     return {
-        "summary": summary,
-        "bot_message": summary,
+        "report": report,
+        "bot_message": report,
         "stage": "done",
-        "conversation_log": _log(state, "bot", summary),
+        "conversation_log": _log(state, "bot", report),
     }

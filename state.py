@@ -8,12 +8,11 @@ SLOT_ORDER = [
     "behavior",
     "duration",
     "impact",
+    "relationship",
     "coping",
     "goal",
+    "self_message",
 ]
-
-# slots consumed by pattern_mapping_node
-PATTERN_MATCH_SLOTS = ["thought", "emotion", "behavior"]
 
 SKIP_IF_FILLED_SLOTS = {}
 
@@ -28,8 +27,10 @@ SLOT_QUESTION_TEMPLATES = {
     "behavior": "사용자의 최근 행동 패턴 또는 경향에 대해 질의. 이는 사용자의 행동 습관이나 문제 때문에 자주 하게 된 행동 패턴에 관한 것으로, 특정 활동 (e.g., 여행, 취미 활동)의 맥락이 아님.",
     "duration": "문제의 지속 기간과 빈도수에 대해 질의",
     "impact": "문제가 구체적으로 일상에 어떤 영향을 주는지 질의",
+    "relationship": "이 문제가 대인관계에 어떤 영향을 미치는지, 요즘 주변 사람들과의 관계는 어떤지 질의",
     "coping": "문제를 해결하기 위해 과거 시도해본 방법에 대해 질의",
     "goal": "사용자의 앞으로의 바램, 기대하는 나아진 모습, 목표에 대해 질의",
+    "self_message": "지금까지 나눈 이야기를 바탕으로, 스스로에게 해주고 싶은 말이 있다면 무엇인지 질의",
 }
 
 SLOT_KOREAN_LABELS = {
@@ -40,8 +41,10 @@ SLOT_KOREAN_LABELS = {
     "behavior": "행동",
     "duration": "기간·빈도",
     "impact": "영향",
+    "relationship": "대인관계",
     "coping": "과거 시도",
     "goal": "목표",
+    "self_message": "나에게 하고 싶은 말",
 }
 
 
@@ -53,8 +56,10 @@ class SlotState(TypedDict):
     behavior: list[str]
     duration: list[str]
     impact: list[str]
+    relationship: list[str]
     coping: list[str]
     goal: list[str]
+    self_message: list[str]
 
 
 def askable_slots(slots: SlotState, asked_slots: list[str]) -> list[str]:
@@ -73,25 +78,12 @@ class PendingQuestion(TypedDict):
     question_intent: str
 
 
-class PatternCandidate(TypedDict):
-    pattern_id: str
-    thought_score: float
-    emotion_score: float
-    behavior_score: float
-    pattern_score: float
-
-
-class PatternFinal(TypedDict):
-    pattern_id: str
-    score: float
-
-
 class GateState(TypedDict):
     coverage_ok: bool
 
 
 class SessionState(TypedDict):
-    stage: Literal["rapport", "loop", "done"]
+    stage: Literal["rapport", "loop", "values", "done"]
     rapport_step: Literal["greeting", "mood", "how", "who"]
     name: str
     turn_count: int
@@ -109,12 +101,12 @@ class SessionState(TypedDict):
     slots: SlotState
     conversation_log: list[dict]
 
-    pattern_candidates: list[PatternCandidate]  
-    pattern_final: list[PatternFinal]  
     gate: GateState
 
-    self_help_ids: list[str]
-    summary: str | None
+    values_prompted: bool
+    selected_values: list[str]
+
+    report: str | None
 
 
 def new_session(name: str) -> SessionState:
@@ -131,11 +123,10 @@ def new_session(name: str) -> SessionState:
         retry_count={s: 0 for s in SLOT_ORDER},
         slots=SlotState(**{slot: [] for slot in SLOT_ORDER}),
         conversation_log=[],
-        pattern_candidates=[],
-        pattern_final=[],
         gate=GateState(
             coverage_ok=False,
         ),
-        self_help_ids=[],
-        summary=None,
+        values_prompted=False,
+        selected_values=[],
+        report=None,
     )

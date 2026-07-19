@@ -1,7 +1,7 @@
 # 상담 챗봇 데모 시나리오 (9개 패턴, 청년 특화 버전)
 
 공통 규칙
-- 질문 순서: situation → emotion → thought → cause → behavior → duration → impact → coping → goal
+- 질문 순서: situation → emotion → thought → cause → behavior → duration → impact → relationship → coping → goal → self_message
 - thought/emotion/behavior에서 "모르겠다" → 재질문 1회 → 그래도 모르겠다면 "잘 모르겠음"으로 채움
 - 나머지 6개 슬롯에서 "모르겠다" → 바로 "-"으로 채움
 

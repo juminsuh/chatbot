@@ -8,7 +8,6 @@ import time
 
 from debug import debug_print, set_debug
 from graph import get_graph
-from pattern_matching import warmup
 from state import new_session
 
 
@@ -19,7 +18,7 @@ def _str2bool(value: str) -> bool:
 def _print_debug(state: dict) -> None:
     print(
         f"  [stage={state['stage']} turn_count={state['turn_count']} "
-        f"pattern_final={state['pattern_final']} gate={state['gate']}]"
+        f"gate={state['gate']} selected_values={state.get('selected_values')}]"
     )
     for slot, values in state["slots"].items():
         content = " / ".join(values) if values else "X"
@@ -37,9 +36,6 @@ def main() -> None:
     graph = get_graph()
     name = input("닉네임을 입력해주세요: ").strip()
     state = new_session(name)
-
-    print("[임베딩 모델 로딩 중...]")
-    warmup()
 
     print("[상담을 시작합니다 - 종료하려면 'quit' 입력]\n")
     state = graph.invoke(state)
