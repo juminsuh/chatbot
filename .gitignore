@@ -6,3 +6,4 @@ venv2
 .venv
 __pycache__
 *.gguf
+.DS_Store
