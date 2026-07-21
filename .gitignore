@@ -7,3 +7,5 @@ venv2
 __pycache__
 *.gguf
 .DS_Store
+.DS_Store
+.vscode/
