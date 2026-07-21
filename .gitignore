@@ -3,5 +3,6 @@
 .git
 venv
 venv2
+.venv
 __pycache__
 *.gguf

@@ -1,3 +1,7 @@
 langgraph
 dotenv
 openai
+faster-whisper
+pywhispercpp
+sounddevice
+numpy
